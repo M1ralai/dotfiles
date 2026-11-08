@@ -1,0 +1,20 @@
+
+
+# better defaults
+alias ls="eza"
+alias ll="eza -la --icons"
+alias lt="eza --tree --level=2 --icons"
+alias cat="bat"
+
+# navigation
+alias ..="cd .."
+alias ...="cd ../.."
+
+# editor
+alias v="nvim"
+
+# clear
+alias c="clear"
+
+# misc
+alias k="kubectl"

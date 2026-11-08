@@ -1,0 +1,13 @@
+# Invisible Workspace: use scripts/sync-wallpaper set KEY VALUE
+# blur: output pixels; dimming: black blend; brightness: -0.5...0.5
+# opacity: image opacity INSIDE an opaque terminal, not window transparency
+# cursor on is experimental and runs Ghostty's continuous focused render loop
+# source empty follows macOS; only flat scalar TOML settings are supported
+blur = 6
+dimming = 0.70
+saturation = 0.85
+brightness = 0
+opacity = 0.80
+max_dimension = 2560
+cursor = "off"
+source = ""

@@ -1,0 +1,24 @@
+theme = light:Rose Pine Dawn,dark:Rose Pine
+
+font-size = 19
+background = #10161d
+foreground = #9fbac8
+background-opacity = 1
+background-blur = true
+background-opacity-cells = true
+background-image-opacity = 0.50
+mouse-hide-while-typing = true
+window-decoration = true
+macos-titlebar-style = hidden
+macos-option-as-alt = false
+background-image="/Users/REPLACE_ME/Downloads/swirly-painting.jpg"
+background-image-fit="cover"
+
+window-padding-x = 10
+window-padding-y = 10
+
+term = xterm-256color
+
+# BEGIN INVISIBLE WORKSPACE
+config-file = "/Users/REPLACE_ME/.config/invisible-workspace/ghostty/generated.conf"
+# END INVISIBLE WORKSPACE

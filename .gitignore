@@ -1,0 +1,9 @@
+# Runtime files and local artifacts
+.DS_Store
+*.swp
+*.swo
+*.bak
+/ghostty/invisible-workspace/scripts/sync-wallpaper
+/ghostty/invisible-workspace/ghostty/
+/ghostty/invisible-workspace/state.json
+/ghostty/invisible-workspace/.sync.lock

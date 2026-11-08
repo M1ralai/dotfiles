@@ -1,0 +1,110 @@
+#!/bin/sh
+# One persistent agent per origin tmux session, physical directory and provider.
+# Only the nested attachment lives in display-popup; detaching never kills a pane.
+set -eu
+
+agent=${1-}
+client=${2-}
+pane=${3-}
+case "$agent" in codex|agy) ;; *) printf '%s\n' 'Usage: agent-popup codex|agy CLIENT PANE' >&2; exit 1 ;; esac
+tmux_bin=$(command -v tmux) || { printf '%s\n' 'tmux is not installed' >&2; exit 1; }
+[ -n "${TMUX-}" ] || { printf '%s\n' 'Open agent popups from a running tmux client' >&2; exit 1; }
+socket=${TMUX%,*}
+socket=${socket%,*}
+tm() { "$tmux_bin" -S "$socket" "$@"; }
+fail() {
+  tm display-message -c "$client" -d 4000 "AI: $1" 2>/dev/null || printf '%s\n' "AI: $1" >&2
+  exit 1
+}
+tm list-sessions >/dev/null 2>&1 || fail 'tmux server is unavailable'
+[ -n "$client" ] && [ -n "$pane" ] || fail 'no originating client or pane'
+owner=$(tm display-message -p -t "$pane" '#{session_id}')
+[ -n "$owner" ] || fail 'the originating pane has closed'
+cwd=$(tm display-message -p -t "$pane" '#{pane_current_path}')
+case "$cwd" in *'
+'*) fail 'directories containing newlines are unsupported' ;; esac
+cwd=$(CDPATH= cd -- "$cwd" && pwd -P) || fail 'the originating directory is unavailable'
+digest=$(printf '%s' "$cwd" | shasum -a 256)
+digest=${digest%% *}
+name="__iw_agent_${owner#\$}_${agent}_${digest}"
+target="=$name:"
+marker=invisible-workspace-v1
+created=0
+
+if tm has-session -t "=$name" 2>/dev/null; then
+  [ "$(tm show-options -qv -t "$target" @iw-agent-owned)" = "$marker" ] &&
+    [ "$(tm show-options -qv -t "$target" @iw-agent-cwd)" = "$cwd" ] &&
+    [ "$(tm show-options -qv -t "$target" @iw-agent-owner)" = "$owner" ] &&
+    [ "$(tm show-options -qv -t "$target" @iw-agent-kind)" = "$agent" ] ||
+    fail 'session name is occupied by an unrelated session'
+else
+  executable=$(command -v "$agent") || fail "$agent CLI is unavailable; install/configure it separately"
+  [ -x "$executable" ] || fail "$agent CLI is not executable"
+  if [ "$agent" = agy ]; then
+    # An old IDE launcher can also be named agy. Do not pass terminal CLI flags to it.
+    help=$("$executable" --help 2>&1) || fail 'agy --help failed'
+    case "$help" in *Antigravity*|*antigravity*) ;; *) fail 'agy is not the Antigravity CLI' ;; esac
+    case "$help" in *--prompt-interactive*) ;; *) fail 'agy is not a verified Antigravity terminal CLI' ;; esac
+    for flag in --mode --sandbox; do
+      case "$help" in *"$flag"*) ;; *) fail "agy does not advertise $flag" ;; esac
+    done
+    case "$help" in *plan*) ;; *) fail 'agy does not advertise plan mode' ;; esac
+  fi
+  if [ "$agent" = codex ]; then
+    set -- "$executable" --no-daemon --sandbox read-only --ask-for-approval never
+  else
+    set -- "$executable" --mode plan --sandbox
+  fi
+
+  # A single tmux command queue configures the pane before launching the CLI.
+  # respawn -k replaces only the new pane's initial shell, even if shell startup is slow.
+  # A simultaneous creator loses new-session and must validate the winner below.
+  if tm new-session -d -s "$name" -c "$cwd" -n "$agent" '' \; \
+    set-option -t "$target" @iw-agent-owned "$marker" \; \
+    set-option -t "$target" @iw-agent-owner "$owner" \; \
+    set-option -t "$target" @iw-agent-cwd "$cwd" \; \
+    set-option -t "$target" @iw-agent-kind "$agent" \; \
+    set-option -t "$target" @iw-agent-executable "$executable" \; \
+    set-option -t "$target" prefix None \; \
+    set-option -t "$target" prefix2 None \; \
+    set-option -t "$target" key-table iw-agent-root \; \
+    set-option -t "$target" status off \; \
+    set-option -t "$target" destroy-unattached off \; \
+    set-option -t "$target" detach-on-destroy on \; \
+    set-window-option -t "$target" remain-on-exit on \; \
+    set-window-option -t "$target" remain-on-exit-format 'Agent exited (#{pane_dead_status}). Prefix H: hide; prefix X: close; reopen to restart.' \; \
+    set-window-option -t "$target" automatic-rename off \; \
+    respawn-pane -k -t "$target" -c "$cwd" "$@" >/dev/null 2>&1; then
+    created=1
+  else
+    [ "$(tm show-options -qv -t "$target" @iw-agent-owned 2>/dev/null)" = "$marker" ] &&
+      [ "$(tm show-options -qv -t "$target" @iw-agent-cwd)" = "$cwd" ] &&
+      [ "$(tm show-options -qv -t "$target" @iw-agent-owner)" = "$owner" ] &&
+      [ "$(tm show-options -qv -t "$target" @iw-agent-kind)" = "$agent" ] ||
+      fail 'could not create the agent session (name occupied or server unavailable)'
+  fi
+fi
+
+# Empty and exited panes restart only on SHOW, never automatically in the background.
+sid=$(tm display-message -p -t "$target" '#{session_id}')
+agent_pane=$(tm display-message -p -t "$target" '#{pane_id}')
+if [ "$created" = 0 ] && [ "$(tm display-message -p -t "$agent_pane" '#{pane_dead}')" = 1 ]; then
+  executable=$(tm show-options -qv -t "$sid" @iw-agent-executable)
+  if [ -x "$executable" ]; then
+    # No -k: a racing SHOW must never kill/restart an already running agent.
+    # Omitting shell-command reuses the original provider-specific argv.
+    tm respawn-pane -t "$agent_pane" -c "$cwd" 2>/dev/null ||
+      [ "$(tm display-message -p -t "$agent_pane" '#{pane_dead}')" = 0 ] ||
+      fail 'could not restart the agent'
+  else
+    # Keep dead sessions accessible so the popup-local Close action still works.
+    tm set-window-option -t "$agent_pane" remain-on-exit-format 'Agent executable is missing. Ctrl-Space X: close this session.'
+  fi
+fi
+
+# Use popup environment fields, not interpolated paths in shell source.
+# TMUX must be removed so attach creates a nested client instead of switching the outer one.
+tm display-popup -E -c "$client" -t "$pane" -d "$cwd" -x C -y C -w 85% -h 85% \
+  -T "$agent | Ctrl-Space H: hide | Ctrl-Space X: close" \
+  -e "IW_AGENT_TMUX=$tmux_bin" -e "IW_AGENT_SOCKET=$socket" -e "IW_AGENT_SESSION=$sid" \
+  'unset TMUX; exec "$IW_AGENT_TMUX" -S "$IW_AGENT_SOCKET" attach-session -E -t "$IW_AGENT_SESSION"'
